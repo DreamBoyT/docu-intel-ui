@@ -1,0 +1,13 @@
+streamlit
+langchain
+langchain-core
+langchain-text-splitters
+langsmith
+PyPDF2
+python-docx
+langchain-openai
+AzureOpenAI
+openai
+langchain_community
+pypdf
+faiss-cpu

@@ -58,11 +58,9 @@ def extract_text_from_pdf(file):
 
 def create_prompt(page_numbers, combined_text):
     combined_text = combined_text.replace("{", "{{").replace("}", "}}")
-    return f"""Extract the main points and summarize the following text from pages {page_numbers} in a clear and concise manner:
-    
+    return f"""Generate a concise and informative summary of the main content from these pages, using letters (a), (b), (c), etc. to denote each key point. Allow the summary to unfold naturally, without a predetermined number of points. Focus on capturing the most essential and relevant information, ensuring that each point adds significant value to the summary. Prioritize quality over quantity, and avoid including unnecessary points. Optimize the summary for clarity, coherence, and speed of generation.
+
     {combined_text}
-    
-    Provide 4 key highlights that summarize the main content of these pages using letters ((a), (b), (c), (d)).
     """
 
 def summarize_pages(llm, page_numbers, combined_text):
@@ -71,7 +69,7 @@ def summarize_pages(llm, page_numbers, combined_text):
     chain = LLMChain(llm=llm, prompt=prompt_template)
     response = chain.run({"combined_text": combined_text})
     start_page, end_page = page_numbers[0], page_numbers[-1]
-    return f"**Pages {start_page}-{end_page}:**\n\n{response.strip()}\n"
+    return f"*Pages {start_page}-{end_page}:*\n\n{response.strip()}\n"
 
 def group_texts(texts, group_size=3):
     grouped_texts = []
@@ -82,9 +80,9 @@ def group_texts(texts, group_size=3):
         grouped_texts.append((page_numbers, combined_text))
     return grouped_texts
 
-def extract_summaries_from_pdf(llm, file):
+def extract_summaries_from_pdf(llm, file, group_size):
     texts = extract_text_from_pdf(file)
-    grouped_texts = group_texts(texts)
+    grouped_texts = group_texts(texts, group_size)
     summaries = [None] * len(grouped_texts)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {executor.submit(summarize_pages, llm, page_numbers, combined_text): idx for idx, (page_numbers, combined_text) in enumerate(grouped_texts)}
@@ -94,7 +92,7 @@ def extract_summaries_from_pdf(llm, file):
                 summaries[idx] = future.result()
             except Exception as e:
                 start_page, end_page = grouped_texts[idx][0][0], grouped_texts[idx][0][-1]
-                summaries[idx] = f"**Pages {start_page}-{end_page}:**\n\nError summarizing pages {start_page}-{end_page}: {e}\n"
+                summaries[idx] = f"*Pages {start_page}-{end_page}:*\n\nError summarizing pages {start_page}-{end_page}: {e}\n"
     return "\n".join(summaries)
 
 def generate_word_file(summaries):
@@ -128,12 +126,28 @@ if pdf_file is not None:
         loader = PyPDFLoader(pdf_path)
         pages = loader.load_and_split()
 
-    overall_summary_checkbox = st.sidebar.checkbox("Generate Overall Summary")
+    summary_option = st.sidebar.radio(
+        "Choose Summary Option",
+        options=[
+            "Generate 1 Page Summary",
+            "Generate 3 Page Summary (default)",
+            "Generate 5 Page Summary"
+        ],
+        index=1
+    )
 
-    if overall_summary_checkbox:
+    if summary_option == "Generate 1 Page Summary":
         combined_content = ''.join([p.page_content for p in pages])
         texts = text_splitter.split_text(combined_content)
-        overall_summary = extract_summaries_from_pdf(llm, pdf_path)
+        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=1)
+    elif summary_option == "Generate 3 Page Summary (default)":
+        combined_content = ''.join([p.page_content for p in pages])
+        texts = text_splitter.split_text(combined_content)
+        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
+    elif summary_option == "Generate 5 Page Summary":
+        combined_content = ''.join([p.page_content for p in pages])
+        texts = text_splitter.split_text(combined_content)
+        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=5)
 
     if overall_summary:
         with st.sidebar:
@@ -196,29 +210,23 @@ if pdf_file is not None:
                     unsafe_allow_html=True
                 )
 
-    question = st.text_input("Enter your question", value="Enter your question here...")
-    submit_button = st.button("Submit")
-
-    if submit_button and question and question != "Enter your question here...":
-        combined_content = ''.join([p.page_content for p in pages])
-        texts = text_splitter.split_text(combined_content)
-        document_search = FAISS.from_texts(texts, embed_model)
-        docs = document_search.similarity_search(question)
-        chain = load_qa_chain(llm, chain_type="stuff")
-        summaries = chain.run(
-            input_documents=docs,
-            question=question,
-            operations=[
-                {"name": "sentence_window", "params": {"window_size": 3}},
-                {"name": "reranker", "params": {"top_n": 5}},
-                {"name": "step_back_prompting", "params": {"prompt_length": 50}}
-            ]
-        )
-        st.subheader("Question Answering Result")
-        st.write(summaries)
-        st.session_state.chat_history.append({"question": question, "answer": summaries})
-    elif submit_button:
-        st.warning("Please enter a valid question.")
+    question = st.text_input("Enter your question")
+    if st.button("Submit"):
+        if question:
+            combined_content = ''.join([p.page_content for p in pages])
+            texts = text_splitter.split_text(combined_content)
+            document_search = FAISS.from_texts(texts, embed_model)
+            docs = document_search.similarity_search(question)
+            chain = load_qa_chain(llm, chain_type="stuff")
+            summaries = chain.run(
+                input_documents=docs,
+                question=question
+            )
+            st.subheader("Question Answering Result")
+            st.write(summaries)
+            st.session_state.chat_history.append({"question": question, "answer": summaries})
+        else:
+            st.warning("Please enter a valid question.")
 else:
     time.sleep(35)
     st.warning("No PDF file uploaded")
